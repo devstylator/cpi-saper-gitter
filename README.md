@@ -236,6 +236,53 @@ To restore a package:
 
 If the package zip is missing for a snapshot (see Troubleshooting), use the unzipped artifact in `content/`. Zip it again, keeping the folder structure, and upload it as a single artifact.
 
+`cpi-import.ps1` does these steps for you (see the next section).
+
+## Importing a package into a tenant
+
+`cpi-import.ps1` is the opposite of the archive script. It takes one package from the archive and imports it into a tenant, for example to restore a snapshot or to bring a package from DEV to QA. It is available for Windows only.
+
+The source is one of the following:
+
+| Source | Example |
+|---|---|
+| A local package repository | `-Path C:\cpi\cpi-dev\MyPackage` |
+| A folder of package repositories, plus the package | `-Path C:\cpi\cpi-dev -Package MyPackage` |
+| A remote package repository (cloned into `%TEMP%` and deleted afterwards) | `-GitUrl https://gitlab.example.com/archive/mypackage.git` |
+| A package export zip | `-Path .\MyPackage.zip` |
+
+Add `-Ref snapshot/YYYYMMDD-HHMMSS` (or any tag, branch or commit) to import an older state. For a local repository, the script checks the ref out into a temporary worktree, so your working tree stays as it is. Without `-Ref`, a local repository is imported as it is on disk, including uncommitted changes. If the zip is stored with Git LFS, the script fetches it.
+
+```powershell
+# Check first: shows the package, the target tenant and whether the package already exists there
+.\cpi-import.ps1 -k qa-key.json -Path C:\cpi\cpi-dev\MyPackage -DryRun
+
+# Import an older snapshot from the remote repository, replace the package and deploy it
+.\cpi-import.ps1 -k qa-key.json -GitUrl https://gitlab.example.com/archive/mypackage.git `
+  -Ref snapshot/20261110-072909 -Overwrite -Deploy
+```
+
+| Option | Meaning |
+|---|---|
+| `-Path PATH` | Local source: package repository, folder of repositories, or export zip |
+| `-GitUrl URL` | Remote source: package repository URL |
+| `-Ref REF` | Tag, branch or commit to import (with a repository) |
+| `-p`, `-Package ID` | Package to take from a folder of package repositories |
+| `-FromContent` | Create the package from `package.json` and upload each artifact from its `content/` folder, instead of importing `_export/<Package>.zip`. This is used automatically when the zip is missing |
+| `-Overwrite` | Replace the package if it already exists on the tenant. Without it, the import stops |
+| `-ApplyConfiguration` | Set the iFlow externalized parameters from each `configuration.json` |
+| `-Deploy` | Deploy the artifacts (script collections, value mappings, message mappings, then iFlows) and wait for the result |
+| `-DeployTimeout SEC` | Seconds to wait for each deployment (default 300) |
+| `-DryRun` | Show what would be done and change nothing |
+
+The connection options (`-k`, `-ApiUrl`, `-Login`, ...) and environment variables are the same as for `cpi-archive.ps1`. The API client needs write access to design-time content, and deploy access if you use `-Deploy`.
+
+Notes:
+
+- **Overwriting works in two ways.** CPI replaces a package from a zip only if the package on the tenant came from an import of the same package. If it was created there in another way, CPI refuses with "artifacts with the same ID", and the script updates the artifacts one by one from their folders. Artifacts that are on the tenant but not in the archive are left in place and listed as warnings. A plain zip has no artifact folders, so in that case, delete the package on the tenant first.
+- **Parameter values come from the source tenant.** `-ApplyConfiguration` writes the values archived from the tenant you exported from. Endpoints and other tenant-specific values usually need to change for another tenant, so check them before you use the option.
+- **Security material is not imported.** At the end, the script lists the credential and key names from `security-refs.tsv`. Create any that are missing on the target tenant before you deploy.
+
 ## Linux (bash)
 
 `cpi-archive.sh` needs:
@@ -297,11 +344,13 @@ Example, run from the archive folder:
 ```powershell
 mkdir C:\cpi\cpi-dev; cd C:\cpi\cpi-dev
 
-C:\path\to\cpi-archive.ps1 -k $HOME\.cpi\dev-key.json -Login -Lfs `
+& C:\path\to\cpi-archive.ps1 -k $HOME\.cpi\dev-key.json -Login -Lfs `
   -p MyPackage `
   -Remote https://github.com/<you>/MyPackage.git -Push `
   -GitName "Your Name" -GitEmail "you@example.com"
 ```
+
+Start the script with `&` (the call operator) whenever its path is quoted or contains spaces, for example `& 'C:\My Tools\cpi-archive.ps1' -h`. Without `&`, PowerShell reads a quoted path as a string and reports `Unexpected token '-k' in expression or statement`.
 
 `-h` shows the help, and `Get-Help .\cpi-archive.ps1 -Detailed` shows it with all parameters.
 

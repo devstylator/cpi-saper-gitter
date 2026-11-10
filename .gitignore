@@ -1,2 +1,5 @@
 # BTP service keys contain the client secret
 *key*.json
+
+# Sample package repository used for testing
+ZBC_ReusableArtifacts_QA/
