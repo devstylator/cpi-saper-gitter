@@ -3,3 +3,7 @@
 
 # Sample package repository used for testing
 ZBC_ReusableArtifacts_QA/
+
+# Local run files
+check-report.txt
+dev-key.json
