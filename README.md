@@ -6,6 +6,8 @@ There are two versions with the same options: `cpi-archive.sh` for Linux (see [L
 
 Each run saves the current design-time state of the packages. If a package changed since the last run, its repository gets one commit and one tag, so each package's history is a list of versions you can restore.
 
+If you only need a plain local copy of a tenant without git, use `cpi-local-archive.sh` (Linux only). It also has a test mode that tells you which packages CPI refuses to export, for example because of draft artifacts. See [Local download without git](#local-download-without-git).
+
 ## Layout
 
 Run the script in a plain folder, for example one folder per tenant. Each package gets its own repository inside it:
@@ -282,6 +284,65 @@ Notes:
 - **Overwriting works in two ways.** CPI replaces a package from a zip only if the package on the tenant came from an import of the same package. If it was created there in another way, CPI refuses with "artifacts with the same ID", and the script updates the artifacts one by one from their folders. Artifacts that are on the tenant but not in the archive are left in place and listed as warnings. A plain zip has no artifact folders, so in that case, delete the package on the tenant first.
 - **Parameter values come from the source tenant.** `-ApplyConfiguration` writes the values archived from the tenant you exported from. Endpoints and other tenant-specific values usually need to change for another tenant, so check them before you use the option.
 - **Security material is not imported.** At the end, the script lists the credential and key names from `security-refs.tsv`. Create any that are missing on the target tenant before you deploy.
+
+## Local download without git
+
+`cpi-local-archive.sh` downloads packages from a tenant into a folder, one sub-folder per package, without creating git repositories. Each package folder has the same content as a package repository from `cpi-archive.sh` (see [What gets archived](#what-gets-archived)), only without `.git`. It uses the same connection options and environment variables as `cpi-archive.sh` (see [Credentials](#credentials)).
+
+### Checking the tenant first
+
+CPI refuses to export a package as a whole while one of its artifacts is in draft state (saved, but without a version). Run the test mode first to find those packages:
+
+```bash
+./cpi-local-archive.sh -k dev-key.json --check > check-report.txt
+```
+
+`--check` writes nothing. For each package, it lists the artifacts and tries the full package export, then throws the download away. The report shows:
+
+- **Not exportable:** each package CPI refused to export, with the HTTP status and CPI's error message, and the artifacts that look like drafts.
+- **Exportable:** each package that exported, with its artifact count. Artifacts without a numeric version are listed as a note.
+
+An artifact "looks like a draft" when its version is not a plain number such as `1.0.3`. CPI reports drafts with a version such as `Active`. This is a hint only; CPI's error message is the reliable signal.
+
+Progress goes to the terminal and the report goes to standard output, so `>` saves only the report. The exit code is 0 when every package can be exported and 2 when at least one cannot, so you can use it in scripts. The test downloads every package export in full, so on a large tenant it takes about as long as a real run.
+
+To fix a package, open each draft artifact in CPI and save it as a version (**Save as version**), then run the check again.
+
+### Downloading
+
+```bash
+# All packages into ~/cpi-backup/<PackageId>/
+./cpi-local-archive.sh -k dev-key.json -d ~/cpi-backup
+
+# Keep every run: ~/cpi-backup/YYYYMMDD-HHMMSS/<PackageId>/
+./cpi-local-archive.sh -k dev-key.json -d ~/cpi-backup --dated
+
+# Two packages only
+./cpi-local-archive.sh -k dev-key.json -d ~/cpi-backup -p PackageA -p PackageB
+```
+
+| Option | Meaning |
+|---|---|
+| `-d`, `--dir DIR` | Target folder (required, except with `--check`). Each package goes to `DIR/<PackageId>/` |
+| `--dated` | Put this run into `DIR/YYYYMMDD-HHMMSS/`, so earlier runs are kept side by side |
+| `-p`, `--package ID` | Download only this package; can be repeated. Without it, all packages are downloaded |
+| `-x`, `--exclude ID` | Skip this package; can be repeated |
+| `--strict` | Treat a package without a full export (`.zip`) as failed and do not write it |
+| `-c`, `--check` | Test mode, see above. Writes nothing |
+| `-h`, `--help` | Show the help |
+
+The connection options (`-k`, `--api-url`, `--token-url`, `--client-id`, `--client-secret`, `--login`, `--login-port`) are the same as for `cpi-archive.sh`.
+
+What happens on a run:
+
+| Situation | Result |
+|---|---|
+| Package downloaded | Its folder is replaced with the new download. Other files you put in the folder are left alone |
+| Package cannot be exported as a whole (draft artifacts, configure-only SAP content) | Warning with CPI's reason. The artifacts are still downloaded, without `_export/<Package>.zip`. With `--strict`, the package fails instead |
+| Package failed to download | Its folder is left as it was, the other packages continue, and the exit code is 1 |
+| A folder with the package's name exists but is not an earlier download | The package is skipped. Move the folder away |
+
+At the end, the script lists the packages it downloaded without a zip and the packages that failed. It needs `curl`, `jq`, `unzip` and GNU grep, but not `git`.
 
 ## Linux (bash)
 
